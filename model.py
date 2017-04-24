@@ -47,22 +47,18 @@ class LSTM_Model:
             maxval=self.config.initializer_scale)
         self.global_step = tf.Variable(0, dtype=tf.int32, trainable=False, name="global_step")        
     
-    def _build_input(self):
-        with tf.variable_scope("input"):
-            self.caption_in = tf.placeholder(tf.int32,[self.config.batch_size, self.config.input_len], name="caption_in")
-            self.caption_out = tf.placeholder(tf.int32,[self.config.batch_size, self.config.input_len], name="caption_out")
-            self.caption_mask = tf.placeholder(tf.int32,[self.config.batch_size, self.config.input_len], name="caption_mask")
-            self.image_feature = tf.placeholder(tf.float32,[self.config.batch_size, self.config.feature_len], name="image_feature")
-    
+  
     def _build_embedding(self):
         with tf.variable_scope("word_embedding"):
+            self.caption_in = tf.placeholder(tf.int32,[self.config.batch_size, self.config.input_len], name="caption_in")
             self.embed_map = tf.get_variable(name="embed_map", 
                                            shape=[self.config.vocab_size, self.config.W],
                                            initializer = self.initializer)
             word_vectors = tf.nn.embedding_lookup(self.embed_map, self.caption_in)
-            self.word_embedding = word_vectors
+        self.word_embedding = word_vectors
         
         with tf.variable_scope("image_embedding"):
+            self.image_feature = tf.placeholder(tf.float32,[self.config.batch_size, self.config.feature_len], name="image_feature")
             feature_embedding = tf.contrib.layers.fully_connected(
             inputs=self.image_feature,
             num_outputs= self.config.H,
@@ -76,8 +72,11 @@ class LSTM_Model:
             lstm_cell = tf.contrib.rnn.BasicLSTMCell(
                 num_units = self.config.H, state_is_tuple =True)
             
+           
             # drop out is not included
             with tf.variable_scope("lstm", initializer = self.initializer) as lstm_scope:
+                self.caption_out = tf.placeholder(tf.int32,[self.config.batch_size, self.config.input_len], name="caption_out")
+                self.caption_mask = tf.placeholder(tf.int32,[self.config.batch_size, self.config.input_len], name="caption_mask")
                 zero_state = lstm_cell.zero_state(
                     batch_size=self.config.batch_size,dtype=tf.float32)
                 _, initial_state = lstm_cell(self.feature_embedding, zero_state)
@@ -92,13 +91,13 @@ class LSTM_Model:
                                                   scope = lstm_scope)
             lstm_out = tf.reshape(lstm_out, [-1, lstm_cell.output_size])
             
-            with tf.variable_scope("loss"):
+            with tf.variable_scope("logits"):
                 w = tf.get_variable('w', [lstm_cell.output_size, self.config.vocab_size], initializer=self.initializer)
                 b = tf.get_variable('b', [self.config.vocab_size], initializer=tf.constant_initializer(0.0))
                 # (Nt)*H ,H*v =Nt.V, bias is zero
                 logits = tf.matmul(lstm_out,w)+b
             
-            
+            with tf.variable_scope("loss"):
                 targets = tf.reshape(self.caption_out,[-1])
                 mask = tf.to_float(tf.reshape(self.caption_mask,[-1]))
                 loss = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=targets,
@@ -116,33 +115,32 @@ class LSTM_Model:
                 self.summary_op = tf.summary.merge_all()
                 
     def _create_optimizer(self):
-        with tf.device('/cpu:0'):
+        #with tf.device('/cpu:0'):
             # decay learning rate
-            num_batches = self.config.total_instances/self.config.batch_size
-            decay_steps = int(num_batches*self.config.num_epochs_per_decay)
-            learning_rate = self.config.initial_learning_rate
+        num_batches = self.config.total_instances/self.config.batch_size
+        decay_steps = int(num_batches*self.config.num_epochs_per_decay)
+        learning_rate = self.config.initial_learning_rate
 
 
-            def _decay_fn(learning_rate, global_step):
-                return tf.train.exponential_decay(learning_rate,
-                                                 global_step,
-                                                 decay_steps = decay_steps,
-                                                 decay_rate=0.5,
-                                                 staircase=True)
+        def _decay_fn(learning_rate, global_step):
+            return tf.train.exponential_decay(learning_rate,
+                                             global_step,
+                                             decay_steps = decay_steps,
+                                             decay_rate=0.5,
+                                             staircase=True)
 
-            learning_rate_decay_fn = _decay_fn
-            self.optimizer = tf.contrib.layers.optimize_loss(loss=self.total_loss,
-                                                      global_step = self.global_step,
-                                                      learning_rate = learning_rate,
-                                                      optimizer = 'SGD',
-                                                      clip_gradients = self.config.clip_gradients,
-                                                      learning_rate_decay_fn =learning_rate_decay_fn)
+        learning_rate_decay_fn = _decay_fn
+        self.optimizer = tf.contrib.layers.optimize_loss(loss=self.total_loss,
+                                                  global_step = self.global_step,
+                                                  learning_rate = learning_rate,
+                                                  optimizer = 'SGD',
+                                                  clip_gradients = self.config.clip_gradients,
+                                                  learning_rate_decay_fn =learning_rate_decay_fn)
 
 
 
     def build_graph(self):
         #tf.reset_default_graph()
-        self._build_input()
         self._build_embedding()
         self._build_model()
         self._create_optimizer()

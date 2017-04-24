@@ -108,7 +108,8 @@ class LSTM_Model:
             tf.losses.add_loss(batch_loss)
             self.total_loss = tf.losses.get_total_loss()
             tf.summary.scalar("loss", self.total_loss)
-            tf.merge_all_summaries()
+            self.summary_op = tf.summary.merge_all()
+            
 
     def build_graph(self):
         #tf.reset_default_graph()
@@ -119,6 +120,29 @@ def train_model(model, config, data):
     
     #g = tf.Graph()
     #with g.as_default():
+    ################define optimizer########
+    num_batches = config.total_instances/config.batch_size
+    decay_steps = int(num_batches*config.num_epochs_per_decay)
+    learning_rate = tf.constant(config.initial_learning_rate)
+
+    learning_rate_decay_fn = None
+    def _decay_fn(learning_rate, global_step):
+        return tf.train.exponential_decay(learning_rate,
+                                         global_step,
+                                         decay_steps = decay_steps,
+                                         decay_rate=0.5,
+                                         staircase=True)
+
+    learning_rate_decay_fn = _decay_fn
+    train_op = tf.contrib.layers.optimize_loss(loss=model.total_loss,
+                                              global_step = model.global_step,
+                                              learning_rate = learning_rate,
+                                              optimizer = 'SGD',
+                                              clip_gradients = config.clip_gradients,
+                                              learning_rate_decay_fn =learning_rate_decay_fn)
+
+    ##################
+    
     saver = tf.train.Saver()
     init = tf.global_variables_initializer()
 
@@ -129,35 +153,15 @@ def train_model(model, config, data):
         if ckpt and ckpt.model_checkpoint_path:
             saver.restore(sess, ckpt.model_checkpoint_path)
             
-        ################define optimizer########
-        num_batches = config.total_instances/config.batch_size
-        decay_steps = int(num_batches*config.num_epochs_per_decay)
-        learning_rate = tf.constant(config.initial_learning_rate)
 
-        learning_rate_decay_fn = None
-        def _decay_fn(learning_rate, global_step):
-            return tf.train.exponential_decay(learning_rate,
-                                             global_step,
-                                             decay_steps = decay_steps,
-                                             decay_rate=0.5,
-                                             staircase=True)
-
-        learning_rate_decay_fn = _decay_fn
-        train_op = tf.contrib.layers.optimize_loss(loss=model.total_loss,
-                                                  global_step = model.global_step,
-                                                  learning_rate = learning_rate,
-                                                  optimizer = 'SGD',
-                                                  clip_gradients = config.clip_gradients,
-                                                  learning_rate_decay_fn =learning_rate_decay_fn)
-     
-        ##################
         
         # 100 epoch
         total_runs = int((config.total_instances/config.batch_size)*config.num_epochs)
         initial_step = model.global_step.eval()
         
         ### initialize summary writer
-        #tf.summary.scalar("learing_rate", learning_rate)
+        tf.summary.scalar("learing_rate", learning_rate)
+        a = tf.summary.merge_all()
         writer = tf.summary.FileWriter('./graphs', sess.graph)
         
         
@@ -168,11 +172,11 @@ def train_model(model, config, data):
             # feed data
             feed_dict = {model.image_feature: image_features, model.caption_in: caption_in, 
                         model.caption_out: caption_out, model.caption_mask: mask}
-            _, total_loss = sess.run([train_op, model.total_loss],
+            merge_op, _, total_loss, b = sess.run([model.summary_op, train_op, model.total_loss, a],
                                            feed_dict = feed_dict)
 
-            writer.add_summary(total_loss, global_step=t)
-            #writer.add_summary(learning_rate, global_step=t)
+            writer.add_summary(merge_op, global_step=t)
+            writer.add_summary(b, global_step=t)
             
             # print loss infor
             if(t+1) % 20 == 0:
@@ -204,11 +208,7 @@ def train_model(model, config, data):
         embedding.tensor_name = embedding_var.name
         
         # link this tensor to its metadata file, in this case the first 500 words of vocab
-        
-        thefile = open('processed/vocab_1000.tsv','a')
-        thefile.close()
-        
-        embedding.metadata_path = 'processed/vocab_1000.tsv'
+        embedding.metadata_path = os.path.join('./processed', 'metadata.tsv')
 
         # saves a configuration file that TensorBoard will read during startup.
         projector.visualize_embeddings(summary_writer, config)

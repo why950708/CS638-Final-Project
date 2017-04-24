@@ -1,6 +1,10 @@
 
 # coding: utf-8
 
+# In[ ]:
+
+
+
 # In[34]:
 from datetime import datetime 
 import tensorflow as tf
@@ -115,27 +119,27 @@ class LSTM_Model:
                 self.summary_op = tf.summary.merge_all()
                 
     def _create_optimizer(self):
-        #with tf.device('/cpu:0'):
+        with tf.device('/cpu:0'):
             # decay learning rate
-        num_batches = self.config.total_instances/self.config.batch_size
-        decay_steps = int(num_batches*self.config.num_epochs_per_decay)
-        learning_rate = self.config.initial_learning_rate
+            num_batches = self.config.total_instances/self.config.batch_size
+            decay_steps = int(num_batches*self.config.num_epochs_per_decay)
+            learning_rate = self.config.initial_learning_rate
 
 
-        def _decay_fn(learning_rate, global_step):
-            return tf.train.exponential_decay(learning_rate,
-                                             global_step,
-                                             decay_steps = decay_steps,
-                                             decay_rate=0.5,
-                                             staircase=True)
+            def _decay_fn(learning_rate, global_step):
+                return tf.train.exponential_decay(learning_rate,
+                                                 global_step,
+                                                 decay_steps = decay_steps,
+                                                 decay_rate=0.5,
+                                                 staircase=True)
 
-        learning_rate_decay_fn = _decay_fn
-        self.optimizer = tf.contrib.layers.optimize_loss(loss=self.total_loss,
-                                                  global_step = self.global_step,
-                                                  learning_rate = learning_rate,
-                                                  optimizer = 'SGD',
-                                                  clip_gradients = self.config.clip_gradients,
-                                                  learning_rate_decay_fn =learning_rate_decay_fn)
+            learning_rate_decay_fn = _decay_fn
+            self.optimizer = tf.contrib.layers.optimize_loss(loss=self.total_loss,
+                                                      global_step = self.global_step,
+                                                      learning_rate = learning_rate,
+                                                      optimizer = 'SGD',
+                                                      clip_gradients = self.config.clip_gradients,
+                                                      learning_rate_decay_fn =learning_rate_decay_fn)
 
 
 
@@ -232,5 +236,4 @@ main()
                 
         
             
-        
 

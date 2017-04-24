@@ -1,4 +1,3 @@
-
 # coding: utf-8
 
 # In[34]:
@@ -24,21 +23,34 @@ class Config(object):
         self.initial_learning_rate = 2.0
         self.input_len = 16
         self.clip_gradients = 5.0
-        self.num_epochs = 1
+        self.num_epochs = 2
 
-def minibatch(data, index, batch_size=32, split='train'):
-    size = data['%s_captions'%split].shape[0]
-    mask = np.random.choice(size, batch_size)
+def minibatch(data, index, batch_size,total_size, split='train'):
+    #batch_size = batch_size+1
     begin = batch_size*index
-    caption = data['%s_captions'%split][mask]
-    image_idxs = data['%s_image_idxs'%split][mask]
+    end = begin+ batch_size
+    if end > total_size:
+        end = total_size - end # minus sign
+        begin = batch_size + end
+        caption_end = data['%s_captions'%split][end:]
+        caption_first = data['%s_captions'%split][0:begin]
+        image_idxs_end = data['%s_image_idxs'%split][end:]
+        image_idxs_first = data['%s_image_idxs'%split][0:begin]
+        image_idxs = np.append(image_idxs_end, image_idxs_first, axis=0)
+        caption = np.append(caption_end, caption_first,axis=0)
+    else:
+        caption = data['%s_captions'%split][begin:end]
+        image_idxs = data['%s_image_idxs'%split][begin:end]
+    
     image_features = data['%s_features' % split][image_idxs]
     urls = data['%s_urls' % split][image_idxs]
     caption_in = caption[:,:-1]
     caption_out = caption[:,1:]
     mask = (caption_out != 0)
+    
     return caption_in, caption_out, mask, image_features, urls
 
+        
 class LSTM_Model:
     def __init__(self, mode, config):
         self.config = config
@@ -95,7 +107,10 @@ class LSTM_Model:
             w = tf.get_variable('w', [lstm_cell.output_size, self.config.vocab_size], initializer=self.initializer)
             b = tf.get_variable('b', [self.config.vocab_size], initializer=tf.constant_initializer(0.0))
             # (Nt)*H ,H*v =Nt.V, bias is zero
+            tf.summary.histogram("weights", w)
             logits = tf.matmul(lstm_out,w)+b
+            #variable_summaries(w)
+            
 
         with tf.variable_scope("loss"):
             targets = tf.reshape(self.caption_out,[-1])
@@ -110,8 +125,8 @@ class LSTM_Model:
             
     def _create_summaries(self):
         with tf.name_scope("summaries"):
-            tf.summary.scalar("loss", self.tota_loss)
-            tf.summary.histogram("histogram loss", self.total_loss)
+            tf.summary.scalar("loss", self.total_loss)
+            tf.summary.histogram("histogramforloss", self.total_loss)
             # because you have several summaries, we should merge them all
             # into one op to make it easier to manage
             self.summary_op = tf.summary.merge_all()
@@ -170,12 +185,12 @@ def train_model(model, config, data):
         tf.summary.scalar("learing_rate", learning_rate)
         a = tf.summary.merge_all()
         writer = tf.summary.FileWriter('./graphs', sess.graph)
-        
-        
+         
         time_now = datetime.now()
         for t in range(total_runs):
 
-            caption_in, caption_out, mask, image_features, urls = minibatch(data,t)
+            caption_in, caption_out, mask, image_features, urls = minibatch(data,t,config.batch_size, config.total_instances)
+            
             # feed data
             feed_dict = {model.image_feature: image_features, model.caption_in: caption_in, 
                         model.caption_out: caption_out, model.caption_mask: mask}
@@ -215,7 +230,11 @@ def train_model(model, config, data):
         embedding.tensor_name = embedding_var.name
         
         # link this tensor to its metadata file, in this case the first 500 words of vocab
-        embedding.metadata_path = os.path.join('./processed', 'metadata.tsv')
+#         metadata_path = './processed/matadata.tsv'
+#         if not os.path.exists(metadata_path):
+#             f = open(metadata_path, "w")
+#             f.close()
+        embedding.metadata_path = os.path.join('processed', 'metadata.tsv')
 
         # saves a configuration file that TensorBoard will read during startup.
         projector.visualize_embeddings(summary_writer, config)
@@ -231,15 +250,3 @@ def main():
     train_model(model, config, data)
 
 main()
-            
-                
-                
-            
-            
-            
-
-                
-        
-            
-        
-

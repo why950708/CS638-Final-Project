@@ -107,7 +107,13 @@ class LSTM_Model:
                                 name="batch_loss")
             tf.losses.add_loss(batch_loss)
             self.total_loss = tf.losses.get_total_loss()
-            tf.summary.scalar("loss", self.total_loss)
+            
+    def _create_summaries(self):
+        with tf.name_scope("summaries"):
+            tf.summary.scalar("loss", self.tota_loss)
+            tf.summary.histogram("histogram loss", self.total_loss)
+            # because you have several summaries, we should merge them all
+            # into one op to make it easier to manage
             self.summary_op = tf.summary.merge_all()
             
 
@@ -115,6 +121,7 @@ class LSTM_Model:
         #tf.reset_default_graph()
         self._build_embedding()
         self._build_model()
+        self._create_summaries()
 
 def train_model(model, config, data):
     

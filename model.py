@@ -27,7 +27,7 @@ class Config(object):
 
 def minibatch(data, index, batch_size,total_size, split='train'):
     #batch_size = batch_size+1
-    begin = batch_size*index
+    begin = (batch_size*index)%total_size
     end = begin+ batch_size
     if end > total_size:
         end = total_size - end # minus sign

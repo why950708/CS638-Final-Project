@@ -1,14 +1,21 @@
 
 # coding: utf-8
 
-# In[ ]:
+# In[1]:
+
+import os
+os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   # see issue #152
+os.environ["CUDA_VISIBLE_DEVICES"]="1"
+# coding: utf-8
+# coding: utf-8
 
 # In[34]:
 from datetime import datetime 
 import tensorflow as tf
-from coco_utils import load_coco_data, decode_captions, sample_coco_minibatch
+from coco_utils import load_coco_data, decode_captions
 from tensorflow.contrib.tensorboard.plugins import projector
 import numpy as np
+from image_utils import image_from_url, write_text_on_image
 import os
 import sys
 
@@ -16,10 +23,10 @@ class Config(object):
     def __init__(self):
         
         self.vocab_size =1004
-        self.batch_size = 32
+        self.batch_size = 10
         self.initializer_scale =0.08
         self.H = 512 #hidden dimension
-        self.T = 16 # caption length
+        #self.T = 16 # caption length
         self.feature_len = 512
         self.W = 512 # embedding size
         self.num_epochs_per_decay = 1
@@ -29,6 +36,38 @@ class Config(object):
         self.clip_gradients = 5.0
         self.num_epochs = 10
         self.num_of_layers = 1
+        
+def _run_validation(sess, caption_in, features, batch_size, model, T):
+    """
+    Make a single gradient update for batch data. 
+    """
+    # Make a minibatch of training data
+    
+    captions_in = caption_in[:, 0].reshape(-1, 1)
+    
+    state = None 
+    final_preds = []
+    current_pred = captions_in
+    mask = np.zeros((batch_size, T))
+    mask[:, 0] = 1
+    
+    # get initial state using image feature 
+    feed_dict = {model.image_feature: features}
+    state = sess.run(model.initial_state, feed_dict=feed_dict)
+    
+    # start to generate sentences
+    for t in range(T):
+        feed_dict={model.caption_in: current_pred, 
+                   model.initial_state : state, 
+                   model.caption_mask: mask}
+            
+        current_pred, state = sess.run([model.preds, model.final_state], feed_dict=feed_dict)
+        
+        current_pred = current_pred.reshape(-1, 1)
+        
+        final_preds.append(current_pred)
+
+    return final_preds
 
 def minibatch(data, index, batch_size,total_size, split='train'):
     #batch_size = batch_size+1
@@ -72,7 +111,7 @@ class LSTM_Model:
   
     def _build_embedding(self):
         with tf.variable_scope("word_embedding"):
-            self.caption_in = tf.placeholder(tf.int32,[self.config.batch_size, self.config.input_len], name="caption_in")
+            self.caption_in = tf.placeholder(tf.int32,[self.config.batch_size, None], name="caption_in")
             self.embed_map = tf.get_variable(name="embed_map", 
                                            shape=[self.config.vocab_size, self.config.W],
                                            initializer = self.initializer)
@@ -97,18 +136,18 @@ class LSTM_Model:
 
         # drop out is not included
         with tf.variable_scope("lstm", initializer = self.initializer) as lstm_scope:
-            self.caption_out = tf.placeholder(tf.int32,[self.config.batch_size, self.config.input_len], name="caption_out")
-            self.caption_mask = tf.placeholder(tf.int32,[self.config.batch_size, self.config.input_len], name="caption_mask")
+            self.caption_out = tf.placeholder(tf.int32,[self.config.batch_size, None], name="caption_out")
+            self.caption_mask = tf.placeholder(tf.int32,[self.config.batch_size, None], name="caption_mask")
             zero_state = lstm_cell.zero_state(
                 batch_size=self.config.batch_size,dtype=tf.float32)
-            _, initial_state = lstm_cell(self.feature_embedding, zero_state)
+            _, self.initial_state = lstm_cell(self.feature_embedding, zero_state)
 
             lstm_scope.reuse_variables()
             sequence_len = tf.reduce_sum(self.caption_mask,1)
-            lstm_out, _ = tf.nn.dynamic_rnn(cell=lstm_cell,
+            lstm_out, self.final_state = tf.nn.dynamic_rnn(cell=lstm_cell,
                                               inputs = self.word_embedding,
                                               sequence_length = sequence_len,
-                                              initial_state = initial_state,
+                                              initial_state = self.initial_state,
                                               dtype = tf.float32,
                                               scope = lstm_scope)
         #to stack batches vertically
@@ -130,6 +169,7 @@ class LSTM_Model:
             )
 
         with tf.variable_scope("loss"):
+            #if mode == 'train':
             targets = tf.reshape(self.caption_out,[-1])
             mask = tf.to_float(tf.reshape(self.caption_mask,[-1]))
             loss = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=targets,
@@ -139,6 +179,12 @@ class LSTM_Model:
                                 name="batch_loss")
             tf.losses.add_loss(batch_loss)
             self.total_loss = tf.losses.get_total_loss()
+            #if mode == 'infer':
+            #softmax = tf.nn.softmax(logits)
+            # get the index with largest prob
+            self.preds = tf.argmax(logits, 1)
+            
+            
             
     def _create_summaries(self):
         with tf.name_scope("summaries"):
@@ -184,52 +230,79 @@ def train_model(model, config, data):
     
     saver = tf.train.Saver()
     init = tf.global_variables_initializer()
-    config_ = tf.ConfigProto()
-    config_.gpu_options.allow_growth = True
-    
-    with tf.Session(config = config_) as sess:
+
+    with tf.Session() as sess:
         sess.run(init)
         # if checkpoint exist, restore
-        #ckpt = tf.train.get_checkpoint_state(os.path.dirname('checkpoints/checkpoint'))
-        #if ckpt and ckpt.model_checkpoint_path:
-        #    saver.restore(sess, ckpt.model_checkpoint_path)
-                    
+        ckpt = tf.train.get_checkpoint_state(os.path.dirname('checkpoints/checkpoint'))
+        if ckpt and ckpt.model_checkpoint_path:
+            saver.restore(sess, ckpt.model_checkpoint_path)
+        
+        
+        rand_int = np.random.randint(1,100)
+        caption_in, caption_out, mask, image_features, urls = minibatch(data, rand_int, config.batch_size, config.total_instances)
+            
+        if not os.path.exists('test_caption'):
+            os.makedirs('test_caption')
+        captions_pred = _run_validation(sess, caption_in, image_features, config.batch_size, model, config.input_len) # the output is size (32, 16)
+        captions_pred = [unpack.reshape(-1, 1) for unpack in captions_pred]
+        captions_pred = np.concatenate(captions_pred, 1)
+
+        captions_deco = decode_captions(captions_pred, data['idx_to_word'])
+
+        for j in range(len(captions_deco)):
+            img_name = os.path.join('test_caption', 'image_{}.jpg'.format(j))
+            img = image_from_url(urls[j])
+            write_text_on_image(img, img_name, captions_deco[j]) 
+        
         # 100 epoch
-        total_runs = int((config.total_instances/config.batch_size)*config.num_epochs)
-        initial_step = model.global_step.eval()
+#         total_runs = int((config.total_instances/config.batch_size)*config.num_epochs)
+#         initial_step = model.global_step.eval()
         
         ### initialize summary writer
-        tf.summary.scalar("learing_rate", learning_rate)
-        a = tf.summary.merge_all()
-        writer = tf.summary.FileWriter('./graphs/singlelayer_lstm', sess.graph)
+#         tf.summary.scalar("learing_rate", learning_rate)
+#         a = tf.summary.merge_all()
+#         writer = tf.summary.FileWriter('./graphs/singlelayer_lstm', sess.graph)
          
-        time_now = datetime.now()
-        for t in range(total_runs):
+#         time_now = datetime.now()
+#         for t in range(total_runs):
 
-            caption_in, caption_out, mask, image_features, urls = minibatch(data,t,config.batch_size, config.total_instances)
+#             caption_in, caption_out, mask, image_features, urls = minibatch(data,t,config.batch_size, config.total_instances)
             
-            # feed data
-            feed_dict = {model.image_feature: image_features, model.caption_in: caption_in, 
-                        model.caption_out: caption_out, model.caption_mask: mask}
-            merge_op, _, total_loss, b = sess.run([model.summary_op, train_op, model.total_loss, a],
-                                           feed_dict = feed_dict)
+#             # feed data
+#             feed_dict = {model.image_feature: image_features, model.caption_in: caption_in, 
+#                         model.caption_out: caption_out, model.caption_mask: mask}
+#             merge_op, _, total_loss, b = sess.run([model.summary_op, train_op, model.total_loss, a],
+#                                            feed_dict = feed_dict)
 
-            writer.add_summary(merge_op, global_step=t)
-            writer.add_summary(b, global_step=t)
+#             writer.add_summary(merge_op, global_step=t)
+#             writer.add_summary(b, global_step=t)
             
-            # print loss infor
-            if(t+1) % 20 == 0:
-                print('(Iteration %d / %d) loss: %f, and time eclipsed: %.2f minutes' % (
-                    t + 1, total_runs, float(total_loss), (datetime.now() - time_now).seconds/60.0))
+#             # print loss infor
+#             if(t+1) % 20 == 0:
+#                 print('(Iteration %d / %d) loss: %f, and time eclipsed: %.2f minutes' % (
+#                     t + 1, total_runs, float(total_loss), (datetime.now() - time_now).seconds/60.0))
             
-            #print image
-            
+#             #print image
+#             if(t+1)%100 == 0:
+#                 if not os.path.exists('test_caption'):
+#                     os.makedirs('test_caption')
+#                 captions_pred = _run_validation(sess, caption_in, image_features, 1, model, config.input_len) # the output is size (32, 16)
+#                 captions_pred = [unpack.reshape(-1, 1) for unpack in captions_pred]
+#                 captions_pred = np.concatenate(captions_pred, 1)
 
-            #save model
-            if(t+1)%50 == 0 or t == (total_runs-1):
-                if not os.path.exists('checkpoints/singlelayer_lstm'):
-                    os.makedirs('checkpoints/singlelayer_lstm')
-                saver.save(sess, 'checkpoints/singlelayer_lstm', t)
+#                 captions_deco = decode_captions(captions_pred, data['idx_to_word'])
+
+#                 for j in range(len(captions_deco)):
+#                     img_name = os.path.join('test_caption', 'image_{}.jpg'.format(j))
+#                     img = image_from_url(urls[j])
+#                     write_text_on_image(img, img_name, captions_deco[j])              
+
+#             #save model
+#             if(t+1)%50 == 0 or t == (total_runs-1):
+#                 if not os.path.exists('checkpoints/singlelayer_lstm'):
+#                     os.makedirs('checkpoints/singlelayer_lstm')
+#                 saver.save(sess, 'checkpoints/singlelayer_lstm', t)
         
         # visualize embed matrix
         #code to visualize the embeddings. uncomment the below to visualize embeddings
@@ -265,86 +338,6 @@ def main():
     model = LSTM_Model('train', config)
     model.build_graph()
     train_model(model, config, data)
-    validation(data, config.batch_size, model,)
+
 main()
-
-
-# In[ ]:
-
-def _run_validation(sess, data, batch_size, model, keep_prob):
-    """
-    Make a single gradient update for batch data. 
-    """
-    # Make a minibatch of training data
-    minibatch = sample_coco_minibatch(data,
-                  batch_size=batch_size,
-                  split='val')
-    captions, features, urls = minibatch
-    
-    captions_in = captions[:, 0].reshape(-1, 1)
-    
-    state = None 
-    final_preds = []
-    current_pred = captions_in
-    mask = np.zeros((batch_size, model_config.padded_length))
-    mask[:, 0] = 1
-    
-    # get initial state using image feature 
-    feed_dict = {model['image_feature']: features, 
-                 model['keep_prob']: keep_prob}
-    state = sess.run(model['initial_state'], feed_dict=feed_dict)
-    
-    # start to generate sentences
-    for t in range(model_config.padded_length):
-        feed_dict={model['input_seqs']: current_pred, 
-                   model['initial_state']: state, 
-                   model['input_mask']: mask, 
-                   model['keep_prob']: keep_prob}
-            
-        current_pred, state = sess.run([model['preds'], model['final_state']], feed_dict=feed_dict)
-        
-        current_pred = current_pred.reshape(-1, 1)
-        
-        final_preds.append(current_pred)
-
-    return final_preds, urls
-
-
-# In[ ]:
-
-def write_text_on_image(image, image_name, caption):
-    
-  # Write caption onto an image 
-  
-    assert isinstance(image, np.ndarray), "input image must be numpy.ndarray!"
-  
-    plt.imshow(image)
-    plt.axis("off")
-    plt.title(caption)
-    plt.savefig(image_name)
-    plt.close()
-
-
-# In[ ]:
-
-def validation(config):
-    temp_dir = "./validation_results"
-    if not os.path.exists(temp_dir):
-        os.makedirs(temp_dir)
-    sess = tf.Session()
-    captions_pred, urls = _run_validation(sess, data, config.batch_size, model, 1.0) # the output is size (32, 16)
-    captions_pred = [unpack.reshape(-1, 1) for unpack in captions_pred]
-    captions_pred = np.concatenate(captions_pred, 1)
-                    
-    captions_deco = decode_captions(captions_pred, data['idx_to_word'])
-                    
-    for j in range(len(captions_deco)):
-        img_name = os.path.join(temp_dir, 'image_{}.jpg'.format(j))
-        img = image_from_url(urls[j])
-        write_text_on_image(img, img_name, captions_deco[j])
-
-
-# In[ ]:
-
-
 

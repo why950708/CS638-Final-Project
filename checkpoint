@@ -1,0 +1,6 @@
+model_checkpoint_path: "multilayer_lstm-112099"
+all_model_checkpoint_paths: "multilayer_lstm-111899"
+all_model_checkpoint_paths: "multilayer_lstm-111949"
+all_model_checkpoint_paths: "multilayer_lstm-111999"
+all_model_checkpoint_paths: "multilayer_lstm-112049"
+all_model_checkpoint_paths: "multilayer_lstm-112099"

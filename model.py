@@ -1,3 +1,7 @@
+import os
+os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   # see issue #152
+os.environ["CUDA_VISIBLE_DEVICES"]="1"
+# coding: utf-8
 # coding: utf-8
 
 # In[34]:
@@ -11,6 +15,7 @@ import sys
 
 class Config(object):
     def __init__(self):
+        
         self.vocab_size =1004
         self.batch_size = 32
         self.initializer_scale =0.08
@@ -18,24 +23,25 @@ class Config(object):
         self.T = 16 # caption length
         self.feature_len = 512
         self.W = 512 # embedding size
-        self.num_epochs_per_decay = 8
+        self.num_epochs_per_decay = 1
         self.total_instances = 400135
         self.initial_learning_rate = 2.0
         self.input_len = 16
         self.clip_gradients = 5.0
-        self.num_epochs = 2
+        self.num_epochs = 10
+        self.num_of_layers = 1
 
 def minibatch(data, index, batch_size,total_size, split='train'):
     #batch_size = batch_size+1
-    begin = (batch_size*index)%total_size
+    begin = batch_size*index%total_size
     end = begin+ batch_size
     if end > total_size:
-        end = total_size - end # minus sign
-        begin = batch_size + end
-        caption_end = data['%s_captions'%split][end:]
-        caption_first = data['%s_captions'%split][0:begin]
-        image_idxs_end = data['%s_image_idxs'%split][end:]
-        image_idxs_first = data['%s_image_idxs'%split][0:begin]
+        print(begin)
+        end = end - total_size# minus sign
+        caption_end = data['%s_captions'%split][begin:]
+        caption_first = data['%s_captions'%split][:end]
+        image_idxs_end = data['%s_image_idxs'%split][:end]
+        image_idxs_first = data['%s_image_idxs'%split][begin:]
         image_idxs = np.append(image_idxs_end, image_idxs_first, axis=0)
         caption = np.append(caption_end, caption_first,axis=0)
     else:
@@ -58,7 +64,12 @@ class LSTM_Model:
             minval=-self.config.initializer_scale,
             maxval=self.config.initializer_scale)
         self.global_step = tf.Variable(0, dtype=tf.int32, trainable=False, name="global_step")        
-    
+        #Mode can be "train", "test", "infer"
+        self.mode = mode
+        #assert error if the mode is not one of the three predesigned modes.
+        assert mode in ['train','test','infer']
+    def is_training(self):
+        return self.mode == "train"
   
     def _build_embedding(self):
         with tf.variable_scope("word_embedding"):
@@ -83,7 +94,7 @@ class LSTM_Model:
     def _build_model(self):
         lstm_cell = tf.contrib.rnn.BasicLSTMCell(
             num_units = self.config.H, state_is_tuple =True)
-
+        lstm_cell = tf.contrib.rnn.MultiRNNCell([lstm_cell] *self.config.num_of_layers)
 
         # drop out is not included
         with tf.variable_scope("lstm", initializer = self.initializer) as lstm_scope:
@@ -101,16 +112,23 @@ class LSTM_Model:
                                               initial_state = initial_state,
                                               dtype = tf.float32,
                                               scope = lstm_scope)
+        #to stack batches vertically
         lstm_out = tf.reshape(lstm_out, [-1, lstm_cell.output_size])
 
-        with tf.variable_scope("logits"):
-            w = tf.get_variable('w', [lstm_cell.output_size, self.config.vocab_size], initializer=self.initializer)
-            b = tf.get_variable('b', [self.config.vocab_size], initializer=tf.constant_initializer(0.0))
+        with tf.variable_scope("logits") as logits_scope:
+            #w = tf.get_variable('w', [lstm_cell.output_size, self.config.vocab_size], initializer=self.initializer)
+            #b = tf.get_variable('b', [self.config.vocab_size], initializer=tf.constant_initializer(0.0))
             # (Nt)*H ,H*v =Nt.V, bias is zero
-            tf.summary.histogram("weights", w)
-            logits = tf.matmul(lstm_out,w)+b
+            #tf.summary.histogram("weights", w)
+            #logits = tf.matmul(lstm_out,w)+b
             #variable_summaries(w)
-            
+            logits = tf.contrib.layers.fully_connected(
+                inputs = lstm_out,
+                num_outputs = self.config.vocab_size,
+                activation_fn = None,
+                weights_initializer = self.initializer,
+                scope = logits_scope
+            )
 
         with tf.variable_scope("loss"):
             targets = tf.reshape(self.caption_out,[-1])
@@ -171,9 +189,9 @@ def train_model(model, config, data):
     with tf.Session() as sess:
         sess.run(init)
         # if checkpoint exist, restore
-        ckpt = tf.train.get_checkpoint_state(os.path.dirname('checkpoints/checkpoint'))
-        if ckpt and ckpt.model_checkpoint_path:
-            saver.restore(sess, ckpt.model_checkpoint_path)
+        #ckpt = tf.train.get_checkpoint_state(os.path.dirname('checkpoints/checkpoint'))
+        #if ckpt and ckpt.model_checkpoint_path:
+        #    saver.restore(sess, ckpt.model_checkpoint_path)
             
 
         
@@ -184,7 +202,7 @@ def train_model(model, config, data):
         ### initialize summary writer
         tf.summary.scalar("learing_rate", learning_rate)
         a = tf.summary.merge_all()
-        writer = tf.summary.FileWriter('./graphs', sess.graph)
+        writer = tf.summary.FileWriter('./graphs/singlelayer_lstm', sess.graph)
          
         time_now = datetime.now()
         for t in range(total_runs):
@@ -210,9 +228,9 @@ def train_model(model, config, data):
 
             #save model
             if(t+1)%50 == 0 or t == (total_runs-1):
-                if not os.path.exists('checkpoints/lstm'):
-                    os.makedirs('checkpoints/lstm')
-                saver.save(sess, 'checkpoints/lstm', t)
+                if not os.path.exists('checkpoints/singlelayer_lstm'):
+                    os.makedirs('checkpoints/singlelayer_lstm')
+                saver.save(sess, 'checkpoints/singlelayer_lstm', t)
         
         # visualize embed matrix
         #code to visualize the embeddings. uncomment the below to visualize embeddings

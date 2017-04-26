@@ -7,7 +7,7 @@ def load_coco_data(max_train=None,
                    pca_features=True):
     
   data = {}
-  base_dir='coco_captioning'
+  base_dir='datasets\coco_captioning'
   caption_file = os.path.join(base_dir, 'coco2014_captions.h5')
   with h5py.File(caption_file, 'r') as f:
     for k, v in f.items():
@@ -60,9 +60,9 @@ def decode_captions(captions, idx_to_word):
     captions = captions[None]
   decoded = []
   N, T = captions.shape
-  for i in xrange(N):
+  for i in range(N):
     words = []
-    for t in xrange(T):
+    for t in range(T):
       word = idx_to_word[captions[i, t]]
       if word != '<NULL>':
         words.append(word)

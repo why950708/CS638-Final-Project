@@ -3,9 +3,9 @@
 
 # In[1]:
 
-import os
-os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   # see issue #152
-os.environ["CUDA_VISIBLE_DEVICES"]="1"
+# import os
+# os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
+# os.environ["CUDA_VISIBLE_DEVICES"]="1"
 # coding: utf-8
 # coding: utf-8
 
@@ -23,7 +23,7 @@ class Config(object):
     def __init__(self):
         
         self.vocab_size =1004
-        self.batch_size = 10
+        self.batch_size = 30
         self.initializer_scale =0.08
         self.H = 512 #hidden dimension
         #self.T = 16 # caption length
@@ -227,17 +227,20 @@ def train_model(model, config, data):
                                               learning_rate_decay_fn =learning_rate_decay_fn)
 
     ##################
-    
     saver = tf.train.Saver()
     init = tf.global_variables_initializer()
 
-    with tf.Session() as sess:
+    # for BLAS Memmory DUMP failure
+    config_ = tf.ConfigProto()
+    config_.gpu_options.allow_growth = True
+
+    with tf.Session(config=config_) as sess:
         sess.run(init)
         # if checkpoint exist, restore
         ckpt = tf.train.get_checkpoint_state(os.path.dirname('checkpoints/checkpoint'))
         if ckpt and ckpt.model_checkpoint_path:
             saver.restore(sess, ckpt.model_checkpoint_path)
-        
+        print("cucessfully restored the checkpoint")
         
         rand_int = np.random.randint(1,100)
         caption_in, caption_out, mask, image_features, urls = minibatch(data, rand_int, config.batch_size, config.total_instances)
@@ -254,7 +257,7 @@ def train_model(model, config, data):
             img_name = os.path.join('test_caption', 'image_{}.jpg'.format(j))
             img = image_from_url(urls[j])
             write_text_on_image(img, img_name, captions_deco[j]) 
-        
+        print("saved predicted images into ./test_caption folder")
         # 100 epoch
 #         total_runs = int((config.total_instances/config.batch_size)*config.num_epochs)
 #         initial_step = model.global_step.eval()

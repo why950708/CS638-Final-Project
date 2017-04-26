@@ -1,0 +1,6 @@
+model_checkpoint_path: "singlelayer_lstm-125041"
+all_model_checkpoint_paths: "singlelayer_lstm-124849"
+all_model_checkpoint_paths: "singlelayer_lstm-124899"
+all_model_checkpoint_paths: "singlelayer_lstm-124949"
+all_model_checkpoint_paths: "singlelayer_lstm-124999"
+all_model_checkpoint_paths: "singlelayer_lstm-125041"
